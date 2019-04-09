@@ -1,2 +1,4 @@
 # pxmx-ctld
-ProxMox plugun for FreeBSD/ctld iSCSI terget as backend
+ProxMox plugin for FreeBSD/ctld iSCSI target as backend
+
+Early beta with some known bugs. Not for production.
