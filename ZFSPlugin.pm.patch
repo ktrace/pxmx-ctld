@@ -1,0 +1,46 @@
+--- ZFSPlugin.pm.orig	2019-03-28 13:39:09.441719647 +0300
++++ ZFSPlugin.pm	2019-04-08 17:55:12.832252943 +0300
+@@ -13,6 +13,7 @@
+ use PVE::Storage::LunCmd::Istgt;
+ use PVE::Storage::LunCmd::Iet;
+ use PVE::Storage::LunCmd::LIO;
++use PVE::Storage::LunCmd::CTLD;
+ 
+ 
+ my @ssh_opts = ('-o', 'BatchMode=yes');
+@@ -32,7 +33,7 @@
+ my $zfs_unknown_scsi_provider = sub {
+     my ($provider) = @_;
+ 
+-    die "$provider: unknown iscsi provider. Available [comstar, istgt, iet, LIO]";
++    die "$provider: unknown iscsi provider. Available [comstar, istgt, iet, LIO, ctld]";
+ };
+ 
+ my $zfs_get_base = sub {
+@@ -46,6 +47,8 @@
+         return PVE::Storage::LunCmd::Iet::get_base;
+     } elsif ($scfg->{iscsiprovider} eq 'LIO') {
+         return PVE::Storage::LunCmd::LIO::get_base;
++    } elsif ($scfg->{iscsiprovider} eq 'ctld') {
++        return PVE::Storage::LunCmd::CTLD::get_base;
+     } else {
+         $zfs_unknown_scsi_provider->($scfg->{iscsiprovider});
+     }
+@@ -68,6 +71,8 @@
+             $msg = PVE::Storage::LunCmd::Iet::run_lun_command($scfg, $timeout, $method, @params);
+         } elsif ($scfg->{iscsiprovider} eq 'LIO') {
+             $msg = PVE::Storage::LunCmd::LIO::run_lun_command($scfg, $timeout, $method, @params);
++        } elsif ($scfg->{iscsiprovider} eq 'ctld') {
++            $msg = PVE::Storage::LunCmd::CTLD::run_lun_command($scfg, $timeout, $method, @params);
+         } else {
+             $zfs_unknown_scsi_provider->($scfg->{iscsiprovider});
+         }
+@@ -107,7 +112,7 @@
+ 
+     return $lu_name if $lu_name;
+ 
+-    die "Could not find lu_name for zvol $zvol";
++    die "Could not find lu_name $lu_name for zvol $zvol";
+ }
+ 
+ sub zfs_add_lun_mapping_entry {
