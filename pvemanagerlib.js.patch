@@ -1,24 +1,43 @@
 --- pvemanagerlib.js.orig	2019-03-28 13:50:36.755001263 +0300
-+++ pvemanagerlib.js	2019-04-08 11:52:49.344119808 +0300
-@@ -6002,7 +6002,8 @@
++++ pvemanagerlib.js	2019-04-10 16:46:59.121148490 +0300
+@@ -6000,9 +6000,10 @@
+     alias: ['widget.pveiScsiProviderSelector'],
+     comboItems: [
  	['comstar', 'Comstar'],
- 	[ 'istgt', 'istgt'],
- 	[ 'iet', 'IET'],
+-	[ 'istgt', 'istgt'],
+-	[ 'iet', 'IET'],
 -	[ 'LIO', 'LIO']
-+	[ 'LIO', 'LIO'],
-+	[ 'ctld', 'CTLD']
++	['istgt', 'istgt'],
++	['iet', 'IET'],
++	['LIO', 'LIO'],
++	['ctld', 'CTLD']
      ]
  });
  Ext.define('PVE.form.DayOfWeekSelector', {
-@@ -30735,6 +30736,7 @@
+@@ -30735,8 +30736,21 @@
  	data: {
  	    isLIO: false,
  	    isComstar: true,
-+        isCTLD: false,
++	    isCTLD: false,
  	    hasWriteCacheOption: true
- 	}
+-	}
++	},
++        formulas: {
++            checktpg: {
++                bind: {
++                    a: '{!isCTLD}',
++                    b: '{!isLIO}'
++                },
++    
++                get: function (parm) {
++                    return (parm.a && parm.b)
++                }
++            }
++        }
      },
-@@ -30750,6 +30752,7 @@
+ 
+     controller: {
+@@ -30750,6 +30764,7 @@
  	    var vm = this.getViewModel();
  	    vm.set('isLIO', newVal === 'LIO');
  	    vm.set('isComstar', newVal === 'comstar');
@@ -26,12 +45,12 @@
  	    vm.set('hasWriteCacheOption', newVal === 'comstar' || newVal === 'istgt');
  	}
      },
-@@ -30849,7 +30852,7 @@
+@@ -30849,7 +30864,7 @@
  		xtype: me.isCreate ? 'textfield' : 'displayfield',
  		name: 'lio_tpg',
  		value: '',
 -		bind: me.isCreate ? { disabled: '{!isLIO}' } : { hidden: '{!isLIO}' },
-+		bind: me.isCreate ? { disabled: '{!isCTLD}' } : { hidden: '{!isCTLD}' },
++		bind: me.isCreate ? { disabled: '{checktpg}' } : { hidden: '{checktpg}' },
  		allowBlank: false,
  		fieldLabel: gettext('Target portal group')
  	    }
