@@ -19,10 +19,15 @@ package PVE::Storage::LunCmd::CTLD;
 # Author: ktrace@yandex.ru
 # -----------------------------------------------------------------
 
+#  CTL has two LUN's: pLUN and cLUN. Here cLUN - inner data 
+
+
+
 use strict;
 use warnings;
 use PVE::Tools qw(run_command);
 use Data::Dumper;
+use Data::UUID;
 
 sub get_base {
     return '/dev/zvol';
@@ -30,7 +35,7 @@ sub get_base {
 
 
 # config file location differs from distro to distro
-my $CONFIG_FILE = '/etc/ctl.conf';	# FreeBSD 10+
+my $CONFIG_FILE = '/etc/ctl.conf';    # FreeBSD 10+
 my $BACKSTORE = 'storage';
 
 my $SETTINGS = {};
@@ -43,12 +48,17 @@ my @scp_cmd = ('/usr/bin/scp', @ssh_opts);
 my $id_rsa_path = '/etc/pve/priv/zfs';
 my $targetcli = '/usr/sbin/ctladm';
 
-#my $res = $execute_command->($scfg, 'scp', undef, $file, @params);
-#my $res = $execute_command->($scfg, 'ssh', undef, 'cat', @params);
-#my $res = $execute_command->($scfg, 'ssh', $timeout, $ietadm, @params);
+my $o_vendor = "FreeBSD";
+my $o_product = "iSCSI Disk";
+my $o_revision = "1961";
+my $o_insec = "on";
+my $o_rpm = "1";
 
 my $execute_command = sub {
     my ($scfg, $exec, $timeout, $method, @params) = @_;
+
+    my $file = "/tmp/debug-execute_command.log";
+    open(my $fh, '>>', $file);
 
     my $msg = '';
     my $err = undef;
@@ -72,6 +82,7 @@ my $execute_command = sub {
     eval {
         run_command($cmd, outfunc => $output, errfunc => $errfunc, timeout => $timeout);
     };
+
     if ($@) {
         $res = {
             result => 0,
@@ -84,6 +95,9 @@ my $execute_command = sub {
         }
     }
 
+    print $fh Dumper($cmd,$res);
+    close $fh;
+
     return $res;
 };
 
@@ -92,41 +106,44 @@ sub update_config {
     my ($scfg) = @_;
     my $file = "/tmp/config$$";
     my $content = '';
-	my $tb = '     ';
-	my $config = $SETTINGS;
+    my $tb = '     ';
+    my $config = $SETTINGS;
 
-	foreach my $tag (sort keys %{$config}) {
-		$content .= $tag." ";
-		foreach my $name (keys %{$config->{$tag}}) {
-			$content .= $name." {\n";
-			if ($tag !~ /^target/) {
-				foreach my $option (sort keys %{$config->{$tag}->{$name}}) {
-				$content .= "$tb$option $config->{$tag}->{$name}->{$option}\n";
-				}
-			} else {
-				foreach my $option (sort keys %{$config->{$tag}->{$name}}) {
-					if ($option =~ /^lun$/) {
-						foreach my $lun_n (sort keys %{$config->{$tag}->{$name}->{$option}}) {
-							$content .= "\n$tb$option $lun_n {\n";
-							my $lun = $config->{$tag}->{$name}->{$option}->{$lun_n};
-							foreach my $lun_opt (sort keys %{$lun}) {
-								$content .= "$tb $tb$ lun_opt $lun->{$lun_opt}\n";
-							}
-							$content .= "$tb}\n";
-						}
-					} else {
-						$content .= "$tb$option $config->{$tag}->{$name}->{$option}\n";
-					}
-				}
-			}
-			$content .= "}\n";
-		}
+    foreach my $tag (sort keys %{$config}) {
+        foreach my $name (keys %{$config->{$tag}}) {
+            $content .= $tag." \"$name\" {\n";
+            if ($tag !~ /^target/) {
+                foreach my $option (sort keys %{$config->{$tag}->{$name}}) {
+                    if ($option =~ /^option$/) {
+                        foreach my $opt (sort keys %{$config->{$tag}->{$name}->{$option}}) {
+                            $content .= "$tb$option \"$opt\" \"$config->{$tag}->{$name}->{$option}->{$opt}\"\n";
+                        }
+                    } else {
+                        $content .= "$tb$option \"$config->{$tag}->{$name}->{$option}\"\n";
+                    }
+                }
+            } else {
+                foreach my $option (sort keys %{$config->{$tag}->{$name}}) {
+                    if (($option =~ /^lun$/)||($option =~ /^portal-group$/)) {
+                        foreach my $lun_n (sort keys %{$config->{$tag}->{$name}->{$option}}) {
+                            # parse lun 3 parameters
+                            my $lun = $config->{$tag}->{$name}->{$option}->{$lun_n};
+                            $content .= "$tb$option \"$lun_n\" \"$lun\"\n";
+                        }
+                    } else {
+                        $content .= "$tb$option \"$config->{$tag}->{$name}->{$option}\"\n";
+                    }
+                }
+            }
+            $content .= "}\n\n";
+        }
 
     }
     open(my $fh, '>', $file) or die "Could not open file '$file' $!";
 
     print $fh $content;
     close $fh;
+#    print Dumper($content); # TODO: kill
 
     my @params = ($CONFIG_FILE);
     my $res = $execute_command->($scfg, 'scp', undef, $file, @params);
@@ -143,132 +160,143 @@ sub parse_options {
     my @chunks = split (/\n/, $body);
     foreach my $line (@chunks) {
         next if ($line !~ /(\S+)\s+(\S+)/);
-        my ($dv, $option, $value) = split (/(\S+)\s+(\S+)/,$line);
-        $config->{$option} = $value;
+        if ($line =~ /(\S+)\s+\"(.+)\"\s+\"(.+)\"/) {
+            my ($dv, $option, $value, $value1) = split (/(\S+)\s+\"(.+)\"\s+\"(.+)\"/,$line);
+            $config->{$option}->{$value} = $value1;
+        } else {
+            my ($dv, $option, $value) = split (/(\S+)\s+\"(.+)\"/,$line);
+            $config->{$option} = $value;
+        }
     }
 };
 
+sub get_plun {
+    my ($scfg,$lu_name) = @_;
+    my @cliparams = ('devlist', '-v');
+    my $res = $execute_command->($scfg, 'ssh', undef, $targetcli, @cliparams);
+    die $res->{msg} if !$res->{result};
+
+    my $file = "/tmp/debug-get_plun.log";
+    open(my $fh, '>>', $file);
+    print $fh "dev $lu_name\n";
+#    close $fh;
+
+    while ($res->{msg} =~ /((\d+)\s+block\s+.*$(?:\s+\w+=.+$)+)/gm) {
+#    while ($res->{msg} =~ /(?=((\d+)\s+block\s+.+?)(?:\d+\s+block|\z))/gs) {
+        my ($block, $index) = ($1, $2);
+        print $fh "Compare: $block and $lu_name\n";
+        # validation? 
+        return $index if ($block =~ /$lu_name/);
+    }
+    return -1;
+}
+
+sub clunlist {
+# return cLUN list
+# map cLUN -> name
+    my ($scfg) = @_;
+    my @cliparams = ('portlist', '-v');
+    my $res = $execute_command->($scfg, 'ssh', undef, $targetcli, @cliparams);
+    die $res->{msg} if !$res->{result};
+    my $lunmap //= {};
+    while ($res->{msg} =~ /(?:Target: $scfg->{target})((?:\s+LUN\s\d+:\s\d+)*)(?:\s+\w+=[\w\.:-]+)*/gm) {
+        my $list = $1;
+#        print ":: cycle :: $1"; # TODO: kill
+        while ($list =~ /(?:\s+LUN\s(\d+):\s(\d+))/gs) {
+#            print ":::: cycle :::: $1 $2"; #TODO: kill
+            $lunmap->{$1} = $2;
+        }
+    }
+#    print Dumper($lunmap);
+    return $lunmap;
+}
+
+sub get_port {
+# get target ID
+    my ($scfg) = @_;
+    my $result = undef;
+    my $tgt = $scfg->{target};
+    my @cliparams = ('portlist', '-l');
+    my $res = $execute_command->($scfg, 'ssh', undef, $targetcli, @cliparams);
+    die $res->{msg} if !$res->{result};
+    $res->{msg} =~ /^(\d+)\s+(\w+)\s+(\w+)\s+(\w+)\s+(\d+)\s+(\d+)\s+($tgt)(.*)$/gm;
+    return $1 if ($1);
+    return -1;
+#die "No port found for $tgt";
+}
 
 my $parser = sub {
     my ($scfg) = @_;
     my $tpg = $scfg->{lio_tpg} || die "Target Portal Group not set, aborting!\n";
     my $tpg_tag;
 
-    #my $base = get_base;
-
-
+#    print "Parser::\n"; # TODO: kill
     my $res = $execute_command->($scfg, 'ssh', undef, 'cat', ($CONFIG_FILE));
     die "No configuration $CONFIG_FILE on $scfg->{portal}\n" unless $res->{result};
 
     my $config = $res->{msg};
+#    print Dumper($config); # TODO: kill
 
-	while ($config =~ /([\w\-\:\.]+)\s+([\w\-\.\:]+)\s+(\{(?>(?>[^{}]+)|(?3))*\})/gs) {
-		my ($tag, $name, $body) = ($1, $2, $3);
-    	if ($tag =~ /target/) {
-        	# need grep again
-        	while ( $body =~ /([\w\-\:\.]+)\s+([\w\-\.\:]+)\s+(\{(?>(?>[^{}]+)|(?3))*\})/gs) {
-				my ($lun, $lun_n, $lun_body) = ($1, $2, $3);
-            	# remove 3rd lever sections
-            	$lun_body =~ s/([\w\-\:\.]+)\s+([\w\-\.\:]+)\s+(\{(?>(?>[^{}]+)|(?3))*\})//gs;
-            	$SETTINGS->{$tag}->{$name}->{$lun}->{$lun_n}  //= {};
-            	parse_options($lun_body, $SETTINGS->{$tag}->{$name}->{$lun}->{$lun_n});
-        	}
-        	#remove processed
-        	$body =~ s/([\w\-\:\.]+)\s+([\w\-\.\:]+)\s+(\{(?>(?>[^{}]+)|(?3))*\})//gs;
-        	parse_options($body, $SETTINGS->{$tag}->{$name} //= {});
-    	} else {
-        	parse_options($body, $SETTINGS->{$tag}->{$name} //= {});
-    	}
+    while ($config =~ /([\w\-\:\.]+)\s+([\w\-\.\:\"]+)\s+(\{(?>(?>[^{}]+)|(?3))*\})/gs) {
+        my ($tag, $name, $body) = ($1, $2, $3);
+            $name =~ s/\"//g;
+            if ($tag =~ /target/) {
+                # need grep again
+                while ( $body =~ /([\w\-\:\.]+)\s+([\w\-\.\:\"]+)\s+(\{(?>(?>[^{}]+)|(?3))*\})/gs) {
+                    my ($lun, $lun_n, $lun_body) = ($1, $2, $3);
+                    # remove 3rd lever sections
+                    $lun_body =~ s/([\w\-\:\.]+)\s+([\w\-\.\:]+)\s+(\{(?>(?>[^{}]+)|(?3))*\})//gs;
+                    $SETTINGS->{$tag}->{$name}->{$lun}->{$lun_n}  //= {};
+                    parse_options($lun_body, $SETTINGS->{$tag}->{$name}->{$lun}->{$lun_n});
+                }
+                #remove processed
+                $body =~ s/([\w\-\:\.]+)\s+([\w\-\.\:\"]+)\s+(\{(?>(?>[^{}]+)|(?3))*\})//gs;
+                parse_options($body, $SETTINGS->{$tag}->{$name} //= {});
+            } else {
+                parse_options($body, $SETTINGS->{$tag}->{$name} //= {});
+            }
 
-	}
-# <---- TODO. Check portal group
+    }
+# <---- TODO. Check portal group``
 # No such portal groups;
 # No such target;
 # No such target in portal group;
+#
+# print Dumper($SETTINGS);
+
 };
 
 
-
-
-# removes the given lu_name from the local list of luns
-#
-#  CHECK!!!CHECK!!!CHECK!!!
-#
-my $free_lu_name = sub {
-    my ($lu_name) = @_;
-
-    my $new = [];
-    foreach my $lun (@{$SETTINGS->{target}->{luns}}) {
-	    if ($lun->{storage_object} ne "$BACKSTORE/$lu_name") {
-	        push @$new, $lun;
-	    }
-    }
-
-    $SETTINGS->{target}->{luns} = $new;
-};
-
-# locally registers a new lun
-#
-#  CHECK!!!CHECK!!!CHECK!!!
-#
-my $register_lun = sub {
-    my ($scfg, $idx, $volname) = @_;
-
-    my $conf = {
-		index => $idx,
-		storage_object => "$BACKSTORE/$volname",
-		is_new => 1,
-    };
-    push @{$SETTINGS->{target}->{luns}}, $conf;
-
-    return $conf;
-};
-
-# extracts the ZFS volume name from a device path
-#
-#  CHECK!!!CHECK!!!CHECK!!!
-#
-#my $extract_volname = sub {
-#    my ($scfg, $lunpath) = @_;
-#    my $volname = undef;
-#
-#    my $base = get_base;
-#    if ($lunpath =~ /^$base\/$scfg->{pool}\/([\w\-]+)$/) {
-#	$volname = $1;
-#    }
-#
-#    return $volname;
-#};
 
 # retrieves the LUN index for a particular object
 my $list_view = sub {
     my ($scfg, $timeout, $method, @params) = @_;
 
     my $object = $params[0];
+    $object =~ s/LUN//;
 
     my $file = "/tmp/debug-list-view.log";
-    my $fh;
-    open($fh, '>>', $file);
-    $object =~ s/LUN//;
+    open(my $fh, '>>', $file);
     print $fh Dumper(@params);
-    
     close $fh;
-    return $object;
+
+return $object;
 };
 
 # determines, if the given object exists on the portal
 my $list_lun = sub {
     my ($scfg, $timeout, $method, @params) = @_;
-    my $found = -1;
+    my $found = undef;
 
-    my $object = $params[0];
+    #my $object = $params[0]; # full path to zvol
+    my ($path,$device) = $params[0] =~ /(.*\/)([^\/]+)$/;
+
     my $config = $SETTINGS;
 
 
     my $file = "/tmp/debug-list-lu.log";
-    my $fh;
-    open($fh, '>>', $file);
-    print $fh "Object: $object\n";
+    open(my $fh, '>>', $file);
+    print $fh "Object: $path,$device\n";
 #    print $fh Dumper($scfg,$config);
 
     foreach my $tag (keys %{$config}) {
@@ -278,17 +306,18 @@ my $list_lun = sub {
             foreach my $option (sort keys %{$config->{$tag}->{$name}}) {
                 next if ($option ne 'lun');
                 foreach my $lun_n (sort keys %{$config->{$tag}->{$name}->{$option}}) {
-                    if ($config->{$tag}->{$name}->{$option}->{$lun_n}->{path} =~ /$object/) {
- #                       print $fh Dumper($lun_n);
-                        return "LUN$lun_n";
+                    if ($device =~ /$config->{$tag}->{$name}->{$option}->{$lun_n}/) {
+                       $found = $lun_n;
+		       #return "$lun_n";
                     }
                 }
             }
         }
     }
 
-#    print $fh Dumper($found);
+    print $fh Dumper($found,$device);
     close $fh;
+    return $device if ($found);
     die "Not found";
 };
 
@@ -296,59 +325,94 @@ my $list_lun = sub {
 my $create_lun = sub {
     my ($scfg, $timeout, $method, @params) = @_;
 
-    my $device = $params[0];
+    my ($path,$device) = $params[0] =~ /(.*\/)([^\/]+)$/;
     my $tpg = $scfg->{lio_tpg} || die "Target Portal Group not set, aborting!\n";
 
+    my $port = get_port($scfg);
+# TODO: if -1 then addport()
     my $config = $SETTINGS;
 
 #    die "$params[0]: LUN already exists!" if ($list_lun->($scfg, $timeout, $method, @params));
 
 # !!!!!!!!!!!!!!
     my $file = "/tmp/debug-create-lu.log";
-    my $fh;
-    open($fh, '>>', $file);
+    open(my $fh, '>>', $file);
 #    print $fh "scfg, config:\n";
 #    print $fh Dumper($scfg,$config);
 #    close $fh;
     my $candidate = 0;
 
+    if ($port == -1) {
+        $config->{target}->{$scfg->{target}}->{'portal-group'}->{pg1} = 'no-authentication';
+        $config->{target}->{$scfg->{target}}->{alias} = 'pg1';
+    }
+
     foreach my $tag (keys %{$config}) {
         next if ($tag !~ /^target/);
-#        print $fh "- $tag\n";
+#        print "- $tag\n"; # TODO: off
         foreach my $name (keys %{$config->{$tag}}) {
             next if ($name !~ /^$scfg->{target}/);
-#            print $fh "-- $name\n";
+#            print "-- $name\n"; # TODO: off
             foreach my $option (sort keys %{$config->{$tag}->{$name}}) {
-#                print $fh "--- $option\n";
+#                print "--- $option\n"; # TODO: off
                 next if ($option !~ /^lun$/);
                 foreach my $lun_n (sort keys %{$config->{$tag}->{$name}->{$option}}) {
-#                    print $fh "---- $lun_n, $candidate\n";
-					if ($lun_n == $candidate) {
-#                        print $fh "----- Equal $lun_n == $candidate\n";
-						$candidate++;
-						next;
-					}
-					next if ($lun_n > $candidate);
+#                    print "---- $lun_n, $candidate\n"; # TODO: off
+                    if ($lun_n == $candidate) {
+#                        print "----- Equal $lun_n == $candidate\n"; # TODO: off
+                        $candidate++;
+                        next;
+                    }
+                    next if ($lun_n > $candidate);
                 }
             }
         }
     }
 
-    print $fh "candidate: $candidate\n";
-    $config->{target}->{$scfg->{target}}->{lun}->{$candidate} //= {};
-    $config->{target}->{$scfg->{target}}->{lun}->{$candidate}->{path} = $device;
+    my $naa=Data::UUID->new;
+    my $hash=$naa->create_hex();
+    print $fh "candidate: $candidate\n"; # TODO: off
+    # $config->{target}->{$scfg->{target}}->{lun}->{$candidate} //= {};
+    $config->{target}->{$scfg->{target}}->{lun}->{$candidate} = $device;
     #$config->{target}->{$scfg->{target}}->{lun}->{$candidate}->{scsiname} = "$scfg->{target},lun,$candidate";
     #$config->{target}->{$scfg->{target}}->{lun}->{$candidate}->{ctld_name} = "$scfg->{target},lun,$candidate";
+    $config->{lun}->{$device}->{serial} = lc(substr($hash,-14,12));
+    $config->{lun}->{$device}->{"ctl-lun"} = "$candidate";
+    $config->{lun}->{$device}->{path} = "$path$device";
+    $config->{lun}->{$device}->{blocksize} = "4096";
+    $config->{lun}->{$device}->{option}->{naa} = "0x6589cfc000000".lc(substr($hash,4,19));
+    $config->{lun}->{$device}->{option}->{vendor} = $o_vendor;
+    $config->{lun}->{$device}->{option}->{revision} = $o_revision;
+    $config->{lun}->{$device}->{option}->{rpm} = $o_rpm;
+    $config->{lun}->{$device}->{option}->{product} = $o_product;
+    $config->{lun}->{$device}->{option}->{insecure_tpc} = $o_insec;
+
+    print $fh "Result, will write:\n";
     print $fh Dumper($scfg,$config);
     close $fh;
     #die "I just DIE, see debug";
-    my @cliparams = ('create', '-b block', "-o file=$device", "-l $candidate"); # VARS!!!!!!!!
-    # my @cliparams = ('create', '-b block', "-o file=$device", "-o ctld_name=$scfg->{target},lun,$candidate -o scsiname=$scfg->{target},lun,$candidate"); # VARS!!!!!!!!
+    my @cliparams = ('create', '-b block',
+        "-S $config->{lun}->{$device}->{serial}",
+        "-B 4096",
+        "-o file=$path$device",
+        "-o product='$config->{lun}->{$device}->{option}->{product}'",
+        "-o vendor=$config->{lun}->{$device}->{option}->{vendor}",
+        "-o revision=$config->{lun}->{$device}->{option}->{revision}",
+        "-o insecure_tpc=$config->{lun}->{$device}->{option}->{insecure_tpc}",
+        "-o naa=$config->{lun}->{$device}->{option}->{naa}",
+        "-o rpm=$config->{lun}->{$device}->{option}->{rpm}",
+        "-d '$config->{lun}->{$device}->{option}->{product}\t$config->{lun}->{$device}->{serial}\t'"); #,
+#        "-l $candidate"); # VARS!!!!!!!!
     my $res = $execute_command->($scfg, 'ssh', $timeout, $targetcli, @cliparams);
     die $res->{msg} if !$res->{result};
 
+    my $pLUN = get_plun($scfg,$device);
+    die "Can't get pLUN" if ($pLUN < 0);
+    # map lun 
+    @cliparams = ('lunmap', '-p',$port, '-l', $candidate, '-L', $pLUN);
+    $res = $execute_command->($scfg, 'ssh', 10, $targetcli, @cliparams);
+#    die $res->{msg} if !$res->{result};
     update_config($scfg);
-
     return $res->{msg};
 };
 
@@ -356,19 +420,23 @@ my $delete_lun = sub {
     my ($scfg, $timeout, $method, @params) = @_;
     my $res = {msg => undef};
 
+    # validation
     my $tpg = $scfg->{lio_tpg} || die "Target Portal Group not set, aborting!\n";
 
-    my $to_kill = $params[0];
-    $to_kill =~ s/LUN//;
+    my $to_kill = $params[0]; # cLUN here
+
+# TODO: remove it
     my $file = "/tmp/debug-delete-lu.log";
     open(my $fh, '>', $file);
-    print $fh Dumper(@params);
+    print $fh "LUN for delete: $to_kill",Dumper(@params);
 
     my $config = $SETTINGS;
 
-    my $ok = 0;
+    my $found = -1;
     my $lun = undef;
-
+    
+    my $port = get_port($scfg);
+#    my $clunlist = clunlist();
     foreach my $tag (keys %{$config}) {
         next if ($tag !~ /^target/);
         foreach my $name (keys %{$config->{$tag}}) {
@@ -376,36 +444,45 @@ my $delete_lun = sub {
             foreach my $option (sort keys %{$config->{$tag}->{$name}}) {
                 next if ($option !~ /^lun$/);
                 foreach my $lun_n (sort keys %{$config->{$tag}->{$name}->{$option}}) {
-                    if ($lun_n eq $to_kill) {
-#                        print $fh "-- LUN$to_kill found in $config->{$tag}->{$name}->{$option}->{$lun_n}->{path}\n";
+	            print $fh "-- $lun_n , $to_kill , $config->{$tag}->{$name}->{$option}->{$lun_n}\n";
+                    if ($config->{$tag}->{$name}->{$option}->{$lun_n} eq $to_kill) {
+                        print $fh "-- $to_kill found in $config->{$tag}->{$name}->{$option}->{$lun_n}\n";
+                        $found = $lun_n;
                         delete  $config->{$tag}->{$name}->{$option}->{$lun_n};
-                        $ok = 1;
+                        delete  $config->{lun}->{$to_kill};
                     }
-                    #$lun = $lun_n if ($config->{$tag}->{$name}->{$option}->{$lun_n}->{path} =~ /$path/);    
-                    #if ($config->{$tag}->{$name}->{$option}->{$lun_n}->{path} =~ /$path/) {
-            		#	print $fh "-- $params[0] not found in $config->{$tag}->{$name}->{$option}->{$lun_n}->{path}\n";
-                    #} 
                 }
             }
         }
-	}
+    }
 
-    die "LUN with num=$to_kill not found" if (not $ok);
- #   print $fh Dumper($config);
 
-	# step 1: delete the lun
-	my @cliparams = ('remove', '-b block', "-l $to_kill" );
-    print $fh Dumper($targetcli, @cliparams);
-	$res = $execute_command->($scfg, 'ssh', $timeout, $targetcli, @cliparams);
-	do {
-	    die $res->{msg};
-	} unless $res->{result};
+    print $fh "LUN with num=$to_kill not found\n" if ($found < 0);
+    print $fh Dumper($config);
+
+    my $pLUN=get_plun($scfg,$to_kill);
+
+    # step 1: unmap clun
+    my @cliparams = ('lunmap', '-p', $port, '-l', $found); # TODO: REPLACE to VAR
+    $res = $execute_command->($scfg, 'ssh', $timeout, $targetcli, @cliparams);
+    die $res->{msg} if !$res->{result};
+    print $fh "ctladm lunmap -p $port -l $to_kill\n";
+
+
+    # step 2: delete the plun
+    @cliparams = ('remove', '-b block', "-l $pLUN" );
+    print $fh "ctladm remove -b block -l $pLUN\n";
+    $res = $execute_command->($scfg, 'ssh', $timeout, $targetcli, @cliparams);
+    do {
+        die $res->{msg};
+    } unless $res->{result};
     
-	#$free_lu_name->($volname);
-    update_config($scfg);
+    #$free_lu_name->($volname);
+   update_config($scfg);
 
 
     close $fh;
+#    $res->{msg} = "STOP! STOP! STOP!";
     return $res->{msg};
 };
 
@@ -422,7 +499,7 @@ my $modify_lun = sub {
 
     $msg = $delete_lun->($scfg, $timeout, $method, @params);
     if ($msg) {
-		$msg = $create_lun->($scfg, $timeout, $method, @params);
+        $msg = $create_lun->($scfg, $timeout, $method, @params);
     }
 
     return $msg;
@@ -446,18 +523,21 @@ my %lun_cmd_map = (
 
 sub run_lun_command {
     my ($scfg, $timeout, $method, @params) = @_;
+    my $file = "/tmp/debug-runluncmd.log"; # TODO: kill
+    open(my $fh, '>>', $file); # TODO: kill
 
     # fetch configuration from target if we haven't yet or if it is stale
     my $timediff = time - $SETTINGS_TIMESTAMP;
     if (!$SETTINGS || $timediff > $SETTINGS_MAXAGE) {
-		$SETTINGS_TIMESTAMP = time;
-		$parser->($scfg);
+        $SETTINGS_TIMESTAMP = time;
+        $parser->($scfg);
     }
-
+    print $fh "Command $method, parameters:\n";
+    print $fh Dumper(@params);
     die "unknown command '$method'" unless exists $lun_cmd_map{$method};
     my $msg = $lun_cmd_map{$method}->($scfg, $timeout, $method, @params);
-
+    print $fh "Answer:\n";
+    print $fh Dumper($msg);
+    close $fh;
     return $msg;
 }
-
-1;
