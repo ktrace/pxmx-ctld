@@ -27,7 +27,7 @@ use strict;
 use warnings;
 use PVE::Tools qw(run_command);
 use Data::Dumper;
-use Data::UUID;
+use UUID 'uuid';
 
 sub get_base {
     return '/dev/zvol';
@@ -317,7 +317,7 @@ my $list_lun = sub {
 
     print $fh Dumper($found,$device);
     close $fh;
-    return $device if ($found);
+    return $device if defined $found;
     die "Not found";
 };
 
@@ -369,8 +369,9 @@ my $create_lun = sub {
         }
     }
 
-    my $naa=Data::UUID->new;
-    my $hash=$naa->create_hex();
+    my $hash = uuid();
+    $hash =~ s/-//g;
+
     print $fh "candidate: $candidate\n"; # TODO: off
     # $config->{target}->{$scfg->{target}}->{lun}->{$candidate} //= {};
     $config->{target}->{$scfg->{target}}->{lun}->{$candidate} = $device;
