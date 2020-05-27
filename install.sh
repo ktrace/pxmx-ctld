@@ -1,6 +1,6 @@
 #!/bin/sh
 
-cp CTLD.pm /usr/share/perl5/PVE/Storage/Luncmd
+cp CTLD.pm /usr/share/perl5/PVE/Storage/LunCmd
 cp ZFSPlugin.pm.patch /usr/share/perl5/PVE/Storage/
 cp pvemanagerlib.js.patch /usr/share/pve-manager/js
 
