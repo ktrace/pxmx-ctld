@@ -106,7 +106,7 @@ sub update_config {
             } else {
                 foreach my $option (sort keys %{$config->{$tag}->{$name}}) {
                     if ($option =~ /^lun$/) {
-                        foreach my $lun_n (sort keys %{$config->{$tag}->{$name}->{$option}}) {
+                        foreach my $lun_n (sort { $a <=> $b } keys %{$config->{$tag}->{$name}->{$option}}) {
                             $content .= "\n$tb$option $lun_n {\n";
                             my $lun = $config->{$tag}->{$name}->{$option}->{$lun_n};
                             foreach my $lun_opt (sort keys %{$lun}) {
@@ -321,7 +321,7 @@ my $create_lun = sub {
             foreach my $option (sort keys %{$config->{$tag}->{$name}}) {
 #                print $fh "--- $option\n";
                 next if ($option !~ /^lun$/);
-                foreach my $lun_n (sort keys %{$config->{$tag}->{$name}->{$option}}) {
+                foreach my $lun_n (sort { $a <=> $b } keys %{$config->{$tag}->{$name}->{$option}}) {
 #                    print $fh "---- $lun_n, $candidate\n";
                     if ($lun_n == $candidate) {
 #                        print $fh "----- Equal $lun_n == $candidate\n";
