@@ -347,7 +347,7 @@ my $create_lun = sub {
     my $res = $execute_command->($scfg, 'ssh', $timeout, $targetcli, @cliparams);
     die $res->{msg} if !$res->{result};
 
-    die "Dangerous: try call lunmap with empry cLUN/pLUN" if ($candidate == "");
+    die "Dangerous: try call lunmap with empry cLUN/pLUN" if ($candidate eq "");
 
     @cliparams = ('lunmap', '-p 3', "-l $candidate", "-L $candidate");
     # my @cliparams = ('create', '-b block', "-o file=$device", "-o ctld_name=$scfg->{target},lun,$candidate -o scsiname=$scfg->{target},lun,$candidate"); # VARS!!!!!!!!
